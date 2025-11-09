@@ -34,7 +34,7 @@
                                                │
                                     ┌──────────▼──────────┐
                                     │  Hardware Device    │
-                                    │  (ESP32/RaspPi)     │
+                                    │      
                                     │   WiFi Enabled      │
                                     └─────────────────────┘
 

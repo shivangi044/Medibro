@@ -1,36 +1,32 @@
 const express = require('express');
 const router = express.Router();
 const {
-  getHardwareSchedule,
+  getUpcomingMedicines,
+  getTakenMedicines,
+  getMissedMedicines,
   updateStatusFromHardware,
-  getSlotConfiguration,
-  bulkUpdateStatus,
-  healthCheck,
-  registerDevice
+  healthCheck
 } = require('../controllers/hardwareController');
 
 /**
  * Hardware API Routes
- * These endpoints are designed to be called by the hardware device
- * They use botId for authentication instead of JWT tokens
+ * No authentication needed - uses mock data for testing
+ * No MongoDB connection required
  */
 
-// Health check - no authentication required
+// Health check - API status
 router.get('/health', healthCheck);
 
-// Device registration
-router.post('/register', registerDevice);
+// Get upcoming medicines (pending status)
+router.get('/upcoming', getUpcomingMedicines);
 
-// Get schedule for hardware to dispense medicines
-router.get('/schedule', getHardwareSchedule);
+// Get taken medicines (completed)
+router.get('/taken', getTakenMedicines);
 
-// Get slot configuration
-router.get('/slots', getSlotConfiguration);
+// Get missed medicines (includes both missed and snoozed)
+router.get('/missed', getMissedMedicines);
 
-// Update single medicine status from hardware
+// Update medicine status from hardware (POST)
 router.post('/update-status', updateStatusFromHardware);
-
-// Bulk update medicine statuses
-router.post('/bulk-update', bulkUpdateStatus);
 
 module.exports = router;

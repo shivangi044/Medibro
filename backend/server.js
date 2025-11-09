@@ -61,9 +61,27 @@ app.use(notFound);
 // Error handler (must be last)
 app.use(errorHandler);
 
+// Get local IP address
+const os = require('os');
+function getLocalIPAddress() {
+  const interfaces = os.networkInterfaces();
+  for (const name of Object.keys(interfaces)) {
+    for (const iface of interfaces[name]) {
+      // Skip internal (loopback) and non-IPv4 addresses
+      if (iface.family === 'IPv4' && !iface.internal) {
+        return iface.address;
+      }
+    }
+  }
+  return 'localhost';
+}
+
 // Start server
 const PORT = process.env.PORT || 5000;
-const server = app.listen(PORT, () => {
+const HOST = '0.0.0.0'; // Listen on all network interfaces
+const LOCAL_IP = getLocalIPAddress();
+
+const server = app.listen(PORT, HOST, () => {
   console.log(`
 ╔═══════════════════════════════════════════════════════════╗
 ║                                                           ║
@@ -71,7 +89,10 @@ const server = app.listen(PORT, () => {
 ║                                                           ║
 ║        Server running in ${process.env.NODE_ENV || 'development'} mode                     ║
 ║        Port: ${PORT}                                          ║
-║        URL: http://localhost:${PORT}                         ║
+║                                                           ║
+║        🌐 Access URLs:                                    ║
+║        📱 Local:    http://localhost:${PORT}                 ║
+║        🌍 Network:  http://${LOCAL_IP}:${PORT}              ║
 ║                                                           ║
 ║        API Documentation:                                 ║
 ║        📚 Auth API:       /api/auth                       ║
@@ -79,6 +100,12 @@ const server = app.listen(PORT, () => {
 ║        📋 Logs API:       /api/logs                       ║
 ║        📊 Analytics API:  /api/analytics                  ║
 ║        🤖 Hardware API:   /api/hardware                   ║
+║                                                           ║
+║        📡 Hardware Endpoints (for testing):               ║
+║        GET  http://${LOCAL_IP}:${PORT}/api/hardware/upcoming    ║
+║        GET  http://${LOCAL_IP}:${PORT}/api/hardware/taken       ║
+║        GET  http://${LOCAL_IP}:${PORT}/api/hardware/missed      ║
+║        POST http://${LOCAL_IP}:${PORT}/api/hardware/update-status ║
 ║                                                           ║
 ╚═══════════════════════════════════════════════════════════╝
   `);

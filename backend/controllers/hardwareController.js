@@ -1,73 +1,152 @@
-const MedicineLog = require('../models/MedicineLog');
-const Medicine = require('../models/Medicine');
-const User = require('../models/User');
+// Mock data for hardware testing (no MongoDB required)
+const mockMedicines = [
+  {
+    id: '1',
+    medicineName: 'Aspirin',
+    dosage: '100mg',
+    slot: 1,
+    scheduledTime: '08:00',
+    status: 'pending',
+    date: new Date().toISOString().split('T')[0]
+  },
+  {
+    id: '2',
+    medicineName: 'Vitamin D',
+    dosage: '50mg',
+    slot: 2,
+    scheduledTime: '14:00',
+    status: 'pending',
+    date: new Date().toISOString().split('T')[0]
+  },
+  {
+    id: '3',
+    medicineName: 'Calcium',
+    dosage: '500mg',
+    slot: 3,
+    scheduledTime: '20:00',
+    status: 'pending',
+    date: new Date().toISOString().split('T')[0]
+  },
+  {
+    id: '4',
+    medicineName: 'Paracetamol',
+    dosage: '500mg',
+    slot: 4,
+    scheduledTime: '06:00',
+    status: 'taken',
+    takenTime: new Date().toISOString(),
+    date: new Date().toISOString().split('T')[0]
+  },
+  {
+    id: '5',
+    medicineName: 'Ibuprofen',
+    dosage: '200mg',
+    slot: 1,
+    scheduledTime: '10:00',
+    status: 'missed',
+    date: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString().split('T')[0]
+  },
+  {
+    id: '6',
+    medicineName: 'Antibiotic',
+    dosage: '250mg',
+    slot: 2,
+    scheduledTime: '12:00',
+    status: 'snoozed',
+    snoozedUntil: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
+    date: new Date().toISOString().split('T')[0]
+  }
+];
+
+// In-memory storage for medicine status updates
+let medicineStorage = [...mockMedicines];
 
 /**
- * @desc    Get medicines to dispense (for hardware to fetch schedule)
- * @route   GET /api/hardware/schedule
- * @access  Public (Hardware should send botId for identification)
+ * @desc    Get upcoming medicines (pending status)
+ * @route   GET /api/hardware/upcoming
+ * @access  Public (No authentication needed)
  */
-const getHardwareSchedule = async (req, res, next) => {
+const getUpcomingMedicines = async (req, res, next) => {
   try {
-    const { botId, startTime, endTime } = req.query;
-
-    if (!botId) {
-      res.status(400);
-      return next(new Error('Bot ID is required'));
-    }
-
-    // Find user by connected bot ID
-    const user = await User.findOne({ connectedBotId: botId });
-
-    if (!user) {
-      res.status(404);
-      return next(new Error('Device not registered'));
-    }
-
-    // Default to next 24 hours if no time range provided
-    const start = startTime ? new Date(startTime) : new Date();
-    const end = endTime ? new Date(endTime) : new Date(Date.now() + 24 * 60 * 60 * 1000);
-
-    // Get pending and snoozed logs within time range
-    const logs = await MedicineLog.find({
-      userId: user._id,
-      scheduledTime: {
-        $gte: start,
-        $lte: end
-      },
-      status: { $in: ['pending', 'snoozed'] },
-      syncedToHardware: false
-    })
-      .populate('medicineId', 'name dosage instructions')
-      .sort({ scheduledTime: 1 });
-
-    // Mark logs as synced to hardware
-    const logIds = logs.map(log => log._id);
-    await MedicineLog.updateMany(
-      { _id: { $in: logIds } },
-      { 
-        syncedToHardware: true, 
-        hardwareSyncTime: new Date() 
-      }
+    const today = new Date().toISOString().split('T')[0];
+    
+    const upcoming = medicineStorage.filter(med => 
+      med.status === 'pending' && med.date === today
     );
 
-    // Format data for hardware
-    const scheduleData = logs.map(log => ({
-      logId: log._id,
-      medicineName: log.medicineName,
-      dosage: log.dosage,
-      scheduledTime: log.scheduledTime,
-      slot: log.slot,
-      instructions: log.medicineId?.instructions || '',
-      status: log.status
-    }));
-
-    res.json({
+    res.status(200).json({
       success: true,
-      botId,
-      userId: user._id,
-      scheduleCount: scheduleData.length,
-      data: scheduleData
+      count: upcoming.length,
+      data: upcoming.map(med => ({
+        id: med.id,
+        medicineName: med.medicineName,
+        dosage: med.dosage,
+        slot: med.slot,
+        scheduledTime: med.scheduledTime,
+        status: med.status
+      }))
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * @desc    Get taken medicines
+ * @route   GET /api/hardware/taken
+ * @access  Public (No authentication needed)
+ */
+const getTakenMedicines = async (req, res, next) => {
+  try {
+    const today = new Date().toISOString().split('T')[0];
+    
+    const taken = medicineStorage.filter(med => 
+      med.status === 'taken' && med.date === today
+    );
+
+    res.status(200).json({
+      success: true,
+      count: taken.length,
+      data: taken.map(med => ({
+        id: med.id,
+        medicineName: med.medicineName,
+        dosage: med.dosage,
+        slot: med.slot,
+        scheduledTime: med.scheduledTime,
+        takenTime: med.takenTime,
+        status: med.status
+      }))
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * @desc    Get missed medicines (includes both missed and snoozed)
+ * @route   GET /api/hardware/missed
+ * @access  Public (No authentication needed)
+ */
+const getMissedMedicines = async (req, res, next) => {
+  try {
+    const today = new Date().toISOString().split('T')[0];
+    
+    const missed = medicineStorage.filter(med => 
+      (med.status === 'missed' || med.status === 'snoozed') && med.date === today
+    );
+
+    res.status(200).json({
+      success: true,
+      count: missed.length,
+      data: missed.map(med => ({
+        id: med.id,
+        medicineName: med.medicineName,
+        dosage: med.dosage,
+        slot: med.slot,
+        scheduledTime: med.scheduledTime,
+        status: med.status,
+        ...(med.status === 'snoozed' && { snoozedUntil: med.snoozedUntil })
+      }))
     });
   } catch (error) {
     next(error);
@@ -77,56 +156,47 @@ const getHardwareSchedule = async (req, res, next) => {
 /**
  * @desc    Update medicine status from hardware
  * @route   POST /api/hardware/update-status
- * @access  Public (Hardware endpoint)
+ * @access  Public (No authentication needed)
  */
 const updateStatusFromHardware = async (req, res, next) => {
   try {
-    const { botId, logId, status, timestamp } = req.body;
+    const { id, status } = req.body;
 
-    if (!botId || !logId || !status) {
+    if (!id || !status) {
       res.status(400);
-      return next(new Error('Bot ID, log ID, and status are required'));
+      return next(new Error('Medicine ID and status are required'));
     }
 
-    // Verify bot is registered
-    const user = await User.findOne({ connectedBotId: botId });
-    if (!user) {
+    // Validate status
+    const validStatuses = ['pending', 'taken', 'missed', 'snoozed', 'skipped'];
+    if (!validStatuses.includes(status)) {
+      res.status(400);
+      return next(new Error(`Invalid status. Must be one of: ${validStatuses.join(', ')}`));
+    }
+
+    // Find medicine in storage
+    const medicineIndex = medicineStorage.findIndex(med => med.id === id);
+    
+    if (medicineIndex === -1) {
       res.status(404);
-      return next(new Error('Device not registered'));
+      return next(new Error('Medicine not found'));
     }
 
-    // Find the log
-    const log = await MedicineLog.findOne({
-      _id: logId,
-      userId: user._id
-    });
-
-    if (!log) {
-      res.status(404);
-      return next(new Error('Medicine log not found'));
+    // Update status
+    medicineStorage[medicineIndex].status = status;
+    
+    if (status === 'taken') {
+      medicineStorage[medicineIndex].takenTime = new Date().toISOString();
+    }
+    
+    if (status === 'snoozed') {
+      medicineStorage[medicineIndex].snoozedUntil = new Date(Date.now() + 30 * 60 * 1000).toISOString();
     }
 
-    // Update status based on hardware input
-    if (status === 'dispensed' || status === 'taken') {
-      await log.markAsTaken();
-      
-      // Decrement medicine count
-      const medicine = await Medicine.findById(log.medicineId);
-      if (medicine) {
-        await medicine.decrementRemaining();
-      }
-    } else if (status === 'skipped') {
-      await log.markAsSkipped('Skipped from hardware device');
-    }
-
-    res.json({
+    res.status(200).json({
       success: true,
-      message: 'Status updated successfully',
-      data: {
-        logId: log._id,
-        status: log.status,
-        takenTime: log.takenTime
-      }
+      message: 'Medicine status updated successfully',
+      data: medicineStorage[medicineIndex]
     });
   } catch (error) {
     next(error);
@@ -134,192 +204,21 @@ const updateStatusFromHardware = async (req, res, next) => {
 };
 
 /**
- * @desc    Get current slot configuration
- * @route   GET /api/hardware/slots
- * @access  Public (Hardware endpoint)
- */
-const getSlotConfiguration = async (req, res, next) => {
-  try {
-    const { botId } = req.query;
-
-    if (!botId) {
-      res.status(400);
-      return next(new Error('Bot ID is required'));
-    }
-
-    // Find user by bot ID
-    const user = await User.findOne({ connectedBotId: botId });
-    if (!user) {
-      res.status(404);
-      return next(new Error('Device not registered'));
-    }
-
-    // Get all active medicines with slot information
-    const medicines = await Medicine.find({
-      userId: user._id,
-      isActive: true
-    }).select('name dosage slot quantity remaining times');
-
-    // Format slot configuration
-    const slotConfig = medicines.map(med => ({
-      slot: med.slot,
-      medicineName: med.name,
-      dosage: med.dosage,
-      remaining: med.remaining,
-      times: med.times
-    }));
-
-    res.json({
-      success: true,
-      botId,
-      slotCount: slotConfig.length,
-      data: slotConfig
-    });
-  } catch (error) {
-    next(error);
-  }
-};
-
-/**
- * @desc    Bulk update medicine statuses
- * @route   POST /api/hardware/bulk-update
- * @access  Public (Hardware endpoint)
- */
-const bulkUpdateStatus = async (req, res, next) => {
-  try {
-    const { botId, updates } = req.body;
-
-    if (!botId || !Array.isArray(updates)) {
-      res.status(400);
-      return next(new Error('Bot ID and updates array are required'));
-    }
-
-    // Verify bot
-    const user = await User.findOne({ connectedBotId: botId });
-    if (!user) {
-      res.status(404);
-      return next(new Error('Device not registered'));
-    }
-
-    const results = [];
-
-    for (const update of updates) {
-      try {
-        const log = await MedicineLog.findOne({
-          _id: update.logId,
-          userId: user._id
-        });
-
-        if (log) {
-          if (update.status === 'taken' || update.status === 'dispensed') {
-            await log.markAsTaken();
-            
-            const medicine = await Medicine.findById(log.medicineId);
-            if (medicine) {
-              await medicine.decrementRemaining();
-            }
-          } else if (update.status === 'skipped') {
-            await log.markAsSkipped('Bulk update from hardware');
-          }
-
-          results.push({
-            logId: update.logId,
-            success: true,
-            status: log.status
-          });
-        } else {
-          results.push({
-            logId: update.logId,
-            success: false,
-            error: 'Log not found'
-          });
-        }
-      } catch (err) {
-        results.push({
-          logId: update.logId,
-          success: false,
-          error: err.message
-        });
-      }
-    }
-
-    res.json({
-      success: true,
-      message: 'Bulk update completed',
-      totalUpdates: updates.length,
-      successCount: results.filter(r => r.success).length,
-      data: results
-    });
-  } catch (error) {
-    next(error);
-  }
-};
-
-/**
- * @desc    Hardware health check and sync status
+ * @desc    Health check for hardware
  * @route   GET /api/hardware/health
- * @access  Public
+ * @access  Public (No authentication needed)
  */
 const healthCheck = async (req, res, next) => {
   try {
-    const { botId } = req.query;
-
-    if (!botId) {
-      return res.json({
-        success: true,
-        message: 'Hardware API is running',
-        timestamp: new Date()
-      });
-    }
-
-    // If botId provided, check registration status
-    const user = await User.findOne({ connectedBotId: botId });
-
-    res.json({
+    res.status(200).json({
       success: true,
       message: 'Hardware API is running',
-      botRegistered: !!user,
-      botId: botId,
-      timestamp: new Date()
-    });
-  } catch (error) {
-    next(error);
-  }
-};
-
-/**
- * @desc    Register or update hardware device
- * @route   POST /api/hardware/register
- * @access  Public
- */
-const registerDevice = async (req, res, next) => {
-  try {
-    const { botId, userId } = req.body;
-
-    if (!botId || !userId) {
-      res.status(400);
-      return next(new Error('Bot ID and User ID are required'));
-    }
-
-    // Find user
-    const user = await User.findById(userId);
-    if (!user) {
-      res.status(404);
-      return next(new Error('User not found'));
-    }
-
-    // Update user with bot information
-    user.connectedBotId = botId;
-    user.bluetoothConnected = true;
-    await user.save();
-
-    res.json({
-      success: true,
-      message: 'Device registered successfully',
-      data: {
-        botId: user.connectedBotId,
-        userId: user._id,
-        userName: user.name
+      timestamp: new Date().toISOString(),
+      endpoints: {
+        upcoming: 'GET /api/hardware/upcoming',
+        taken: 'GET /api/hardware/taken',
+        missed: 'GET /api/hardware/missed',
+        updateStatus: 'POST /api/hardware/update-status'
       }
     });
   } catch (error) {
@@ -328,10 +227,9 @@ const registerDevice = async (req, res, next) => {
 };
 
 module.exports = {
-  getHardwareSchedule,
+  getUpcomingMedicines,
+  getTakenMedicines,
+  getMissedMedicines,
   updateStatusFromHardware,
-  getSlotConfiguration,
-  bulkUpdateStatus,
-  healthCheck,
-  registerDevice
+  healthCheck
 };
