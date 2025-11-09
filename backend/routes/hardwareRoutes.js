@@ -4,7 +4,9 @@ const {
   getUpcomingMedicines,
   getTakenMedicines,
   getMissedMedicines,
-  updateStatusFromHardware,
+  receiveUpcomingUpdate,
+  receiveTakenUpdate,
+  receiveMissedUpdate,
   healthCheck
 } = require('../controllers/hardwareController');
 
@@ -12,21 +14,40 @@ const {
  * Hardware API Routes
  * No authentication needed - uses mock data for testing
  * No MongoDB connection required
+ * 
+ * Each endpoint has:
+ * - GET: Backend sends data to hardware/mobile app
+ * - POST: Hardware sends status updates to backend
  */
 
 // Health check - API status
 router.get('/health', healthCheck);
 
-// Get upcoming medicines (pending status)
+// ============================================
+// UPCOMING MEDICINES
+// ============================================
+// GET: Backend sends upcoming medicines to hardware
 router.get('/upcoming', getUpcomingMedicines);
 
-// Get taken medicines (completed)
+// POST: Hardware sends status update (taken/snoozed/missed)
+router.post('/upcoming', receiveUpcomingUpdate);
+
+// ============================================
+// TAKEN MEDICINES
+// ============================================
+// GET: Backend sends taken medicines to mobile app
 router.get('/taken', getTakenMedicines);
 
-// Get missed medicines (includes both missed and snoozed)
+// POST: Hardware confirms medicine was taken or snoozed
+router.post('/taken', receiveTakenUpdate);
+
+// ============================================
+// MISSED MEDICINES
+// ============================================
+// GET: Backend sends missed medicines to mobile app
 router.get('/missed', getMissedMedicines);
 
-// Update medicine status from hardware (POST)
-router.post('/update-status', updateStatusFromHardware);
+// POST: Hardware confirms medicine was missed
+router.post('/missed', receiveMissedUpdate);
 
 module.exports = router;

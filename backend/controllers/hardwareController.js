@@ -1,65 +1,4 @@
-// Mock data for hardware testing (no MongoDB required)
-const mockMedicines = [
-  {
-    id: '1',
-    medicineName: 'Aspirin',
-    dosage: '100mg',
-    slot: 1,
-    scheduledTime: '08:00',
-    status: 'pending',
-    date: new Date().toISOString().split('T')[0]
-  },
-  {
-    id: '2',
-    medicineName: 'Vitamin D',
-    dosage: '50mg',
-    slot: 2,
-    scheduledTime: '14:00',
-    status: 'pending',
-    date: new Date().toISOString().split('T')[0]
-  },
-  {
-    id: '3',
-    medicineName: 'Calcium',
-    dosage: '500mg',
-    slot: 3,
-    scheduledTime: '20:00',
-    status: 'pending',
-    date: new Date().toISOString().split('T')[0]
-  },
-  {
-    id: '4',
-    medicineName: 'Paracetamol',
-    dosage: '500mg',
-    slot: 4,
-    scheduledTime: '06:00',
-    status: 'taken',
-    takenTime: new Date().toISOString(),
-    date: new Date().toISOString().split('T')[0]
-  },
-  {
-    id: '5',
-    medicineName: 'Ibuprofen',
-    dosage: '200mg',
-    slot: 1,
-    scheduledTime: '10:00',
-    status: 'missed',
-    date: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString().split('T')[0]
-  },
-  {
-    id: '6',
-    medicineName: 'Antibiotic',
-    dosage: '250mg',
-    slot: 2,
-    scheduledTime: '12:00',
-    status: 'snoozed',
-    snoozedUntil: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
-    date: new Date().toISOString().split('T')[0]
-  }
-];
-
-// In-memory storage for medicine status updates
-let medicineStorage = [...mockMedicines];
+const HardwareMedicine = require('../models/HardwareMedicine');
 
 /**
  * @desc    Get upcoming medicines (pending status)
@@ -70,20 +9,22 @@ const getUpcomingMedicines = async (req, res, next) => {
   try {
     const today = new Date().toISOString().split('T')[0];
     
-    const upcoming = medicineStorage.filter(med => 
-      med.status === 'pending' && med.date === today
-    );
+    const upcoming = await HardwareMedicine.find({
+      status: 'pending',
+      date: today
+    }).sort({ scheduledTime: 1 });
 
     res.status(200).json({
       success: true,
       count: upcoming.length,
       data: upcoming.map(med => ({
-        id: med.id,
+        id: med._id.toString(),
         medicineName: med.medicineName,
         dosage: med.dosage,
         slot: med.slot,
         scheduledTime: med.scheduledTime,
-        status: med.status
+        status: med.status,
+        snoozeCount: med.snoozeCount || 0
       }))
     });
   } catch (error) {
@@ -100,21 +41,23 @@ const getTakenMedicines = async (req, res, next) => {
   try {
     const today = new Date().toISOString().split('T')[0];
     
-    const taken = medicineStorage.filter(med => 
-      med.status === 'taken' && med.date === today
-    );
+    const taken = await HardwareMedicine.find({
+      status: 'taken',
+      date: today
+    }).sort({ takenTime: -1 });
 
     res.status(200).json({
       success: true,
       count: taken.length,
       data: taken.map(med => ({
-        id: med.id,
+        id: med._id.toString(),
         medicineName: med.medicineName,
         dosage: med.dosage,
         slot: med.slot,
         scheduledTime: med.scheduledTime,
         takenTime: med.takenTime,
-        status: med.status
+        status: med.status,
+        snoozeCount: med.snoozeCount || 0
       }))
     });
   } catch (error) {
@@ -131,20 +74,22 @@ const getMissedMedicines = async (req, res, next) => {
   try {
     const today = new Date().toISOString().split('T')[0];
     
-    const missed = medicineStorage.filter(med => 
-      (med.status === 'missed' || med.status === 'snoozed') && med.date === today
-    );
+    const missed = await HardwareMedicine.find({
+      status: { $in: ['missed', 'snoozed'] },
+      date: today
+    }).sort({ scheduledTime: 1 });
 
     res.status(200).json({
       success: true,
       count: missed.length,
       data: missed.map(med => ({
-        id: med.id,
+        id: med._id.toString(),
         medicineName: med.medicineName,
         dosage: med.dosage,
         slot: med.slot,
         scheduledTime: med.scheduledTime,
         status: med.status,
+        snoozeCount: med.snoozeCount || 0,
         ...(med.status === 'snoozed' && { snoozedUntil: med.snoozedUntil })
       }))
     });
@@ -154,11 +99,89 @@ const getMissedMedicines = async (req, res, next) => {
 };
 
 /**
- * @desc    Update medicine status from hardware
- * @route   POST /api/hardware/update-status
+ * @desc    Receive data from hardware about upcoming medicines (POST)
+ * @route   POST /api/hardware/upcoming
  * @access  Public (No authentication needed)
+ * @body    { id, status, snoozeCount } - Hardware sends which medicine was dispensed/removed from upcoming
  */
-const updateStatusFromHardware = async (req, res, next) => {
+const receiveUpcomingUpdate = async (req, res, next) => {
+  try {
+    const { id, status, snoozeCount } = req.body;
+
+    if (!id || !status) {
+      res.status(400);
+      return next(new Error('Medicine ID and status are required'));
+    }
+
+    console.log(`📥 Received from hardware - Upcoming medicine update: ID=${id}, Status=${status}, SnoozeCount=${snoozeCount || 0}`);
+
+    // Find medicine in MongoDB
+    const medicine = await HardwareMedicine.findById(id);
+    
+    if (!medicine) {
+      res.status(404);
+      return next(new Error('Medicine not found'));
+    }
+
+    // Logic: Medicine removed from upcoming
+    if (status === 'taken') {
+      medicine.status = 'taken';
+      medicine.takenTime = new Date();
+      medicine.snoozeCount = 0;
+      console.log(`✅ Medicine "${medicine.medicineName}" moved to TAKEN`);
+    } 
+    else if (status === 'snoozed') {
+      // Use snoozeCount from hardware if provided, otherwise increment backend count
+      if (snoozeCount !== undefined) {
+        medicine.snoozeCount = snoozeCount;
+        console.log(`⏰ Hardware sent snoozeCount: ${snoozeCount}`);
+      } else {
+        medicine.snoozeCount = (medicine.snoozeCount || 0) + 1;
+        console.log(`⏰ Backend incremented snoozeCount: ${medicine.snoozeCount}`);
+      }
+      
+      // If snoozed more than 2 times, move to missed
+      if (medicine.snoozeCount > 2) {
+        medicine.status = 'missed';
+        console.log(`❌ Medicine "${medicine.medicineName}" snoozed ${medicine.snoozeCount} times - moved to MISSED`);
+      } else {
+        medicine.status = 'snoozed';
+        medicine.snoozedUntil = new Date(Date.now() + 30 * 60 * 1000);
+        console.log(`⏰ Medicine "${medicine.medicineName}" snoozed (count: ${medicine.snoozeCount})`);
+      }
+    }
+    else if (status === 'missed') {
+      medicine.status = 'missed';
+      console.log(`❌ Medicine "${medicine.medicineName}" moved to MISSED`);
+    }
+
+    // Save to MongoDB
+    await medicine.save();
+
+    res.status(200).json({
+      success: true,
+      message: 'Upcoming medicine status received successfully',
+      data: {
+        id: medicine._id.toString(),
+        medicineName: medicine.medicineName,
+        status: medicine.status,
+        snoozeCount: medicine.snoozeCount,
+        movedTo: medicine.status === 'missed' ? 'missed dataset' : 
+                 medicine.status === 'taken' ? 'taken dataset' : 'upcoming dataset'
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * @desc    Receive data from hardware about taken medicines (POST)
+ * @route   POST /api/hardware/taken
+ * @access  Public (No authentication needed)
+ * @body    { id, status } - Hardware confirms medicine was taken or snoozed
+ */
+const receiveTakenUpdate = async (req, res, next) => {
   try {
     const { id, status } = req.body;
 
@@ -167,36 +190,98 @@ const updateStatusFromHardware = async (req, res, next) => {
       return next(new Error('Medicine ID and status are required'));
     }
 
-    // Validate status
-    const validStatuses = ['pending', 'taken', 'missed', 'snoozed', 'skipped'];
-    if (!validStatuses.includes(status)) {
-      res.status(400);
-      return next(new Error(`Invalid status. Must be one of: ${validStatuses.join(', ')}`));
-    }
+    console.log(`📥 Received from hardware - Taken medicine update: ID=${id}, Status=${status}`);
 
-    // Find medicine in storage
-    const medicineIndex = medicineStorage.findIndex(med => med.id === id);
+    // Find medicine in MongoDB
+    const medicine = await HardwareMedicine.findById(id);
     
-    if (medicineIndex === -1) {
+    if (!medicine) {
       res.status(404);
       return next(new Error('Medicine not found'));
     }
 
-    // Update status
-    medicineStorage[medicineIndex].status = status;
-    
+    // Logic: Medicine marked as taken or snoozed
     if (status === 'taken') {
-      medicineStorage[medicineIndex].takenTime = new Date().toISOString();
+      medicine.status = 'taken';
+      medicine.takenTime = new Date();
+      medicine.snoozeCount = 0;
+      console.log(`✅ Medicine "${medicine.medicineName}" confirmed as TAKEN`);
+    } 
+    else if (status === 'snoozed') {
+      medicine.snoozeCount = (medicine.snoozeCount || 0) + 1;
+      
+      // If snoozed more than 2 times, move to missed
+      if (medicine.snoozeCount > 2) {
+        medicine.status = 'missed';
+        console.log(`❌ Medicine "${medicine.medicineName}" snoozed ${medicine.snoozeCount} times - moved to MISSED`);
+      } else {
+        medicine.status = 'snoozed';
+        medicine.snoozedUntil = new Date(Date.now() + 30 * 60 * 1000);
+        console.log(`⏰ Medicine "${medicine.medicineName}" snoozed again (count: ${medicine.snoozeCount})`);
+      }
     }
-    
-    if (status === 'snoozed') {
-      medicineStorage[medicineIndex].snoozedUntil = new Date(Date.now() + 30 * 60 * 1000).toISOString();
-    }
+
+    // Save to MongoDB
+    await medicine.save();
 
     res.status(200).json({
       success: true,
-      message: 'Medicine status updated successfully',
-      data: medicineStorage[medicineIndex]
+      message: 'Taken medicine status received successfully',
+      data: {
+        id: medicine._id.toString(),
+        medicineName: medicine.medicineName,
+        status: medicine.status,
+        snoozeCount: medicine.snoozeCount,
+        takenTime: medicine.takenTime,
+        movedTo: medicine.status === 'missed' ? 'missed dataset' : 'taken dataset'
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * @desc    Receive data from hardware about missed medicines (POST)
+ * @route   POST /api/hardware/missed
+ * @access  Public (No authentication needed)
+ * @body    { id, status } - Hardware confirms medicine was missed
+ */
+const receiveMissedUpdate = async (req, res, next) => {
+  try {
+    const { id, status } = req.body;
+
+    if (!id) {
+      res.status(400);
+      return next(new Error('Medicine ID is required'));
+    }
+
+    console.log(`📥 Received from hardware - Missed medicine update: ID=${id}, Status=${status || 'missed'}`);
+
+    // Find medicine in MongoDB
+    const medicine = await HardwareMedicine.findById(id);
+    
+    if (!medicine) {
+      res.status(404);
+      return next(new Error('Medicine not found'));
+    }
+
+    // Logic: Medicine confirmed as missed
+    medicine.status = 'missed';
+    console.log(`❌ Medicine "${medicine.medicineName}" confirmed as MISSED`);
+
+    // Save to MongoDB
+    await medicine.save();
+
+    res.status(200).json({
+      success: true,
+      message: 'Missed medicine status received successfully',
+      data: {
+        id: medicine._id.toString(),
+        medicineName: medicine.medicineName,
+        status: medicine.status,
+        movedTo: 'missed dataset'
+      }
     });
   } catch (error) {
     next(error);
@@ -230,6 +315,8 @@ module.exports = {
   getUpcomingMedicines,
   getTakenMedicines,
   getMissedMedicines,
-  updateStatusFromHardware,
+  receiveUpcomingUpdate,
+  receiveTakenUpdate,
+  receiveMissedUpdate,
   healthCheck
 };
